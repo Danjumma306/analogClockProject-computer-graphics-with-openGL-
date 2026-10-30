@@ -1,0 +1,7 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="analogClockProject/analogClockProject.vcxproj" Id="45b4a8a4-d9e2-418b-9c88-9d372eef8a05" />
+</Solution>
