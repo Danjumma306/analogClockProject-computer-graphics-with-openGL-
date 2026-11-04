@@ -1,8 +1,11 @@
 // clock_glfw.cpp - Analog Clock Simulation (C++ / OpenGL / GLFW)
 
 #define STB_IMAGE_IMPLEMENTATION
-#include "stb_image.h"          // only used to load logo.jpg
+#include "stb_image.h"          // loads logo.jpeg
 
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
 #include <GLFW/glfw3.h>
 #include <cmath>
 #include <cstdio>
@@ -10,6 +13,7 @@
 #include <cstdlib>
 #include <ctime>
 #include <iostream>
+#include <filesystem>
 
 const double PI = 3.14159265358979323846;
 const int    WINDOW_SIZE = 600;
@@ -114,7 +118,21 @@ void drawText(const char* s, float cx, float cy, float px) {
 
 void loadLogo() {
     int w, h, n;
-    unsigned char* data = stbi_load(LOGO_FILE, &w, &h, &n, 3);
+    // Resolve assets beside the executable, regardless of the launch directory.
+    wchar_t executablePath[32768]{};
+    const DWORD length = GetModuleFileNameW(nullptr, executablePath, 32768);
+    if (length == 0 || length >= 32768) {
+        printf("Could not resolve executable path.\n");
+        return;
+    }
+    const auto logoPath = std::filesystem::path(executablePath).parent_path() / LOGO_FILE;
+    FILE* file = nullptr;
+    if (_wfopen_s(&file, logoPath.c_str(), L"rb") != 0 || !file) {
+        printf("Could not open logo beside executable.\n");
+        return;
+    }
+    unsigned char* data = stbi_load_from_file(file, &w, &h, &n, 3);
+    fclose(file);
     if (!data) {
         printf("Could not load %s - running without logo.\n", LOGO_FILE);
         return;
@@ -151,6 +169,48 @@ void drawRing(float r, float lineWidth, int segments = 120) {
         glVertex2f(r * (float)cos(a), r * (float)sin(a));
     }
     glEnd();
+}
+
+// Filled rings scale with the face and do not depend on driver line-width limits.
+void drawBorder(float innerRadius, float outerRadius, const float* color, float alpha = 1.0f) {
+    glColor4f(color[0], color[1], color[2], alpha);
+    glBegin(GL_TRIANGLE_STRIP);
+    for (int i = 0; i <= 240; ++i) {
+        const double angle = 2.0 * PI * i / 240.0;
+        const float x = static_cast<float>(cos(angle));
+        const float y = static_cast<float>(sin(angle));
+        glVertex2f(innerRadius * x, innerRadius * y);
+        glVertex2f(outerRadius * x, outerRadius * y);
+    }
+    glEnd();
+}
+
+void drawClockShadow(float rimRadius) {
+    // A soft radial alpha gradient, slightly below the clock, like the web face.
+    const float innerRadius = rimRadius - 0.04f;
+    const float outerRadius = rimRadius + 0.06f;
+    glPushMatrix();
+    glTranslatef(0.0f, -0.028f, 0.0f);
+    glColor4f(0.082f, 0.243f, 0.176f, 0.13f);
+    drawCircle(0.0f, 0.0f, innerRadius, 240);
+    for (int band = 0; band < 32; ++band) {
+        const float t0 = band / 32.0f;
+        const float t1 = (band + 1) / 32.0f;
+        const float r0 = innerRadius + (outerRadius - innerRadius) * t0;
+        const float r1 = innerRadius + (outerRadius - innerRadius) * t1;
+        glBegin(GL_TRIANGLE_STRIP);
+        for (int i = 0; i <= 240; ++i) {
+            const double angle = 2.0 * PI * i / 240.0;
+            const float x = static_cast<float>(cos(angle));
+            const float y = static_cast<float>(sin(angle));
+            glColor4f(0.082f, 0.243f, 0.176f, 0.13f * (1.0f - t0) * (1.0f - t0));
+            glVertex2f(r0 * x, r0 * y);
+            glColor4f(0.082f, 0.243f, 0.176f, 0.13f * (1.0f - t1) * (1.0f - t1));
+            glVertex2f(r1 * x, r1 * y);
+        }
+        glEnd();
+    }
+    glPopMatrix();
 }
 
 // Hand as a thin quad. angleDeg is measured clockwise from 12 o'clock.
@@ -217,13 +277,23 @@ void drawLogo() {
 }
 
 void drawFace() {
+    // Match the web clock's 260 / 253 / 244 / 237 radius proportions.
+    const float outerRim = CLOCK_RADIUS * 260.0f / 244.0f;
+    const float greenRim = CLOCK_RADIUS * 253.0f / 244.0f;
+    const float goldRim = CLOCK_RADIUS * 237.0f / 244.0f;
+    const float rimColor[3] = { 0.910f, 0.898f, 0.847f };
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    drawClockShadow(outerRim);
+    glColor3f(rimColor[0], rimColor[1], rimColor[2]);
+    drawCircle(0.0f, 0.0f, outerRim, 240);
+    glColor3f(GREEN[0], GREEN[1], GREEN[2]);
+    drawCircle(0.0f, 0.0f, greenRim, 240);
     glColor3f(0.984f, 0.980f, 0.957f);
-    drawCircle(0.0f, 0.0f, CLOCK_RADIUS);
+    drawCircle(0.0f, 0.0f, CLOCK_RADIUS, 240);
 
     drawLogo();
 
-    glColor3f(GREEN[0], GREEN[1], GREEN[2]);
-    drawRing(CLOCK_RADIUS, 6.0f);
+    drawBorder(goldRim - 0.00175f, goldRim + 0.00175f, GOLD, 0.45f);
 
     // 60 tick marks, thicker every 5
     for (int i = 0; i < 60; i++) {
@@ -320,12 +390,14 @@ void keyCallback(GLFWwindow* window, int key, int, int action, int) {
 
 // ---------- Main ----------
 
-int main() {
+int main(int argc, char* argv[]) {
+    const bool smokeTest = argc > 1 && std::strcmp(argv[1], "--smoke-test") == 0;
     if (!glfwInit()) {
         printf("Failed to initialise GLFW\n");
         return EXIT_FAILURE;
     }
 
+    if (smokeTest) glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
     glfwWindowHint(GLFW_SAMPLES, 4);                // anti-aliasing
 
     GLFWwindow* window = glfwCreateWindow(WINDOW_SIZE, WINDOW_SIZE,
@@ -352,13 +424,18 @@ int main() {
     glfwGetFramebufferSize(window, &fbW, &fbH);
     framebufferSizeCallback(window, fbW, fbH);
 
+    int frames = 0;
     while (!glfwWindowShouldClose(window)) {
         render();
         glfwSwapBuffers(window);
         glfwPollEvents();
+        if (smokeTest && ++frames >= 3) glfwSetWindowShouldClose(window, GLFW_TRUE);
     }
 
+    const bool passed = logoLoaded && glGetError() == GL_NO_ERROR;
+    if (smokeTest) printf("Smoke test: %s (OpenGL rendering and logo loading)\n", passed ? "PASS" : "FAIL");
+    if (logoLoaded) glDeleteTextures(1, &logoTex);
     glfwDestroyWindow(window);
     glfwTerminate();
-    return 0;
+    return smokeTest && !passed ? EXIT_FAILURE : EXIT_SUCCESS;
 }
