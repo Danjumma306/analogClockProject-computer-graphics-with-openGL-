@@ -361,3 +361,12 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+# Local build output
+/bin/
+/obj/
+/dist/
+# Vendored GLFW binaries are required for fresh clones
+!/third_party/glfw/lib/
+!/third_party/glfw/lib/**/
+!/third_party/glfw/lib/**/*.lib
+!/third_party/glfw/lib/**/*.dll
